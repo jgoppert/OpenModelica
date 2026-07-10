@@ -2385,6 +2385,14 @@ pub fn threadWorkFailed() {
     panic!("System.threadWorkFailed: worker thread aborted by user code");
 }
 
+pub fn isCancelled() -> bool {
+    metamodelica::cancel::check_cancel()
+}
+
+pub fn reportProgress(permille: i32, phase: i32) {
+    metamodelica::cancel::report_progress(permille, phase);
+}
+
 pub fn getMemorySize() -> metamodelica::Real {
     // Total system memory in bytes. The C runtime reads `_SC_PHYS_PAGES *
     // _SC_PAGE_SIZE` on POSIX; we don't have a portable shortcut in std.
