@@ -3,6 +3,10 @@ def isWindows() {
   return !isUnix()
 }
 
+def isMac() {
+  return isUnix() && sh(script: 'uname', returnStdout: true).startsWith("Darwin")
+}
+
 void standardSetup() {
   echo "${env.NODE_NAME}"
 
@@ -276,39 +280,75 @@ void buildOMC(CC, CXX, extraFlags, Boolean buildCpp, Boolean clean) {
   sanityCheck('build', buildCpp)
 }
 
-void buildOMC_CMake(cmake_args, cmake_exe='cmake') {
+/**
+ * Configure and build OMC via CMake, and run the sanity check.
+ *
+ * Detects the current platform and applies the platform-specific setup
+ * itself, so callers never need to wrap this in their own withEnv/OMDev
+ * boilerplate:
+ *  - Windows: clones/updates OMDev and extends PATH with its MSYS2 toolchain.
+ *  - macOS: prefers Homebrew/MacPorts tools on PATH.
+ *  - Linux: no extra setup.
+ *
+ * @param cmake_args list of individual CMake "-DFOO=BAR"-style arguments
+ *                   (not a pre-joined string); they are joined with spaces
+ *                   before being passed to the cmake CLI.
+ * @param cmake_exe  the cmake executable to invoke.
+ */
+void buildOMC_CMake(List cmake_args, cmake_exe='cmake') {
+  echo "Running on: ${env.NODE_NAME}"
   standardSetup()
 
-  if (isWindows()) {
-    bat (label: 'build', script: """
-      If Defined LOCALAPPDATA (echo LOCALAPPDATA: %LOCALAPPDATA%) Else (Set "LOCALAPPDATA=C:\\Users\\OpenModelica\\AppData\\Local")
-      echo on
-      (
-      echo export MSYS_WORKSPACE="`cygpath '${WORKSPACE}'`"
-      echo echo MSYS_WORKSPACE: \${MSYS_WORKSPACE}
-      echo cd \${MSYS_WORKSPACE}
-      echo which cmake
-      echo set -ex
-      echo mkdir build_cmake
-      echo ${cmake_exe} --version
-      echo ${cmake_exe} -S ./ -B ./build_cmake ${cmake_args}
-      echo time ${cmake_exe} --build ./build_cmake --parallel ${numPhysicalCPU()} --target install
-      ) > buildOMCWindows.sh
+  def cmake_args_str = cmake_args.join(' ')
 
-      set MSYSTEM=UCRT64
-      set MSYS2_PATH_TYPE=inherit
-      %OMDEV%\\tools\\msys\\usr\\bin\\sh --login -i -c "cd `cygpath '${WORKSPACE}'` && chmod +x buildOMCWindows.sh && ./buildOMCWindows.sh && rm -f ./buildOMCWindows.sh"
-    """)
+  if (isWindows()) {
+    withEnv (["OMDEV=C:\\OMDevUCRT",
+              "PATH=${env.OMDEV}\\tools\\msys\\usr\\bin;${env.OMDEV}\\tools\\msys\\ucrt64;C:\\Program Files\\TortoiseSVN\\bin;c:\\bin\\jdk\\bin;c:\\bin\\nsis\\;${env.PATH};c:\\bin\\git\\bin;"]) {
+      bat "echo PATH: %PATH%"
+      cloneOMDev()
+      bat (label: 'build', script: """
+        If Defined LOCALAPPDATA (echo LOCALAPPDATA: %LOCALAPPDATA%) Else (Set "LOCALAPPDATA=C:\\Users\\OpenModelica\\AppData\\Local")
+        echo on
+        (
+        echo export MSYS_WORKSPACE="`cygpath '${WORKSPACE}'`"
+        echo echo MSYS_WORKSPACE: \${MSYS_WORKSPACE}
+        echo cd \${MSYS_WORKSPACE}
+        echo which cmake
+        echo set -ex
+        echo mkdir build_cmake
+        echo ${cmake_exe} --version
+        echo ${cmake_exe} -S ./ -B ./build_cmake ${cmake_args_str}
+        echo time ${cmake_exe} --build ./build_cmake --parallel ${numPhysicalCPU()} --target install
+        ) > buildOMCWindows.sh
+
+        set MSYSTEM=UCRT64
+        set MSYS2_PATH_TYPE=inherit
+        %OMDEV%\\tools\\msys\\usr\\bin\\sh --login -i -c "cd `cygpath '${WORKSPACE}'` && chmod +x buildOMCWindows.sh && ./buildOMCWindows.sh && rm -f ./buildOMCWindows.sh"
+      """)
+      sanityCheck('build', true)
+    }
+  }
+  else if (isMac()) {
+    withEnv (["PATH=/opt/homebrew/bin:/opt/homebrew/opt/openjdk/bin:/usr/local/bin:${env.PATH}"]) {
+      sh "echo PATH: $PATH"
+      sh "mkdir ./build_cmake"
+      sh "${cmake_exe} --version"
+      sh "${cmake_exe} -S ./ -B ./build_cmake ${cmake_args_str}"
+      sh "${cmake_exe} --build ./build_cmake --parallel ${numPhysicalCPU()} --target install"
+      sh "${cmake_exe} --build ./build_cmake --parallel ${numPhysicalCPU()} --target testsuite-depends"
+      sh "build/bin/omc --version"
+      sanityCheck('build', true)
+    }
   }
   else {
     sh "mkdir ./build_cmake"
     sh "${cmake_exe} --version"
-    sh "${cmake_exe} -S ./ -B ./build_cmake ${cmake_args}"
+    sh "${cmake_exe} -S ./ -B ./build_cmake ${cmake_args_str}"
     sh "${cmake_exe} --build ./build_cmake --parallel ${numPhysicalCPU()} --target install"
     sh "${cmake_exe} --build ./build_cmake --parallel ${numPhysicalCPU()} --target testsuite-depends"
+    sh "build/bin/omc --version"
+    sanityCheck('build', true)
   }
-
-  sanityCheck('build', true)
 }
 
 // sccache config for the cargo builds: a shared S3 (MinIO) compile cache at
@@ -778,6 +818,16 @@ def cacheBranch() {
   return "${env.CHANGE_TARGET ?: env.GIT_BRANCH}"
 }
 
+// Send the default failure-notification email, but only for master builds.
+void notifyOnFailure() {
+  if (cacheBranch() == "master") {
+    emailext subject: '$DEFAULT_SUBJECT',
+    body: '$DEFAULT_CONTENT',
+    replyTo: '$DEFAULT_REPLYTO',
+    to: '$DEFAULT_TO'
+  }
+}
+
 def cacheBranchEscape() {
   def name = (cacheBranch()).replace('maintenance/v','')
   name = name.replace('/','-')
@@ -794,7 +844,7 @@ def makeCommand() {
   return env.GMAKE ?: "make"
 }
 
-def shouldWeBuildUCRT() {
+private def shouldWeBuildUCRT() {
   if (isPR()) {
     if (pullRequest.labels.contains("CI/Build MSYS2-UCRT64")) {
       return true
@@ -803,7 +853,7 @@ def shouldWeBuildUCRT() {
   return params.BUILD_MSYS2_UCRT64
 }
 
-def shouldWeBuildAlpine() {
+private def shouldWeBuildAlpine() {
   if (isPR()) {
     if (pullRequest.labels.contains("CI/Build Alpine")) {
       return true
@@ -812,7 +862,7 @@ def shouldWeBuildAlpine() {
   return params.BUILD_ALPINE
 }
 
-def shouldWeDisableAllCMakeBuilds() {
+private def shouldWeDisableAllCMakeBuilds() {
   if (isPR()) {
     if (pullRequest.labels.contains("CI/CMake/Disable/All")) {
       return true
@@ -821,7 +871,7 @@ def shouldWeDisableAllCMakeBuilds() {
   return params.DISABLE_ALL_CMAKE_BUILDS
 }
 
-def shouldWeEnableUCRTCMakeBuild() {
+private def shouldWeEnableUCRTCMakeBuild() {
   if (isPR()) {
     if (pullRequest.labels.contains("CI/CMake/Enable/MSYS2-UCRT64")) {
       return true
@@ -830,7 +880,7 @@ def shouldWeEnableUCRTCMakeBuild() {
   return params.ENABLE_MSYS2_UCRT64_CMAKE_BUILD
 }
 
-def shouldWeEnableMacOSCMakeBuild() {
+private def shouldWeEnableMacOSCMakeBuild() {
   if (isPR()) {
     if (pullRequest.labels.contains("CI/CMake/Enable/macOS")) {
       return true
@@ -839,7 +889,7 @@ def shouldWeEnableMacOSCMakeBuild() {
   return params.ENABLE_MACOS_CMAKE_BUILD
 }
 
-def shouldWeRunRustTests() {
+private def shouldWeRunRustTests() {
   if (isPR()) {
     if (pullRequest.labels.contains("CI/Enable Rust Tests")) {
       return true
@@ -854,7 +904,7 @@ def rustWasmOptCMakeFlag() {
   return isPR() ? "-DRUST_OMC_WASM_OPT=OFF" : "-DRUST_OMC_WASM_OPT=ON"
 }
 
-def shouldWeRunTests() {
+private def shouldWeRunTests() {
   if (isPR()) {
     def skipTestsFilesList = [".*[.]md",
                               "OMEdit/.*",
@@ -876,8 +926,35 @@ def shouldWeRunTests() {
   return true
 }
 
-def isPR() {
+private def isPR() {
   return env.CHANGE_ID ? true : false
+}
+
+/**
+ * Evaluate all the shouldWe... / isPR build flags used to gate pipeline stages,
+ * printing each one, and return them as a map. Centralising this in one
+ * function (instead of the Jenkinsfile calling+printing each individually)
+ * keeps the CPS-compiled pipeline script itself small.
+ */
+Map evaluateBuildFlags() {
+  def flags = [:]
+  flags.isPR = isPR()
+  print "isPR: ${flags.isPR}"
+  flags.shouldWeBuildUCRT = shouldWeBuildUCRT()
+  print "shouldWeBuildUCRT: ${flags.shouldWeBuildUCRT}"
+  flags.shouldWeBuildAlpine = shouldWeBuildAlpine()
+  print "shouldWeBuildAlpine: ${flags.shouldWeBuildAlpine}"
+  flags.shouldWeDisableAllCMakeBuilds = shouldWeDisableAllCMakeBuilds()
+  print "shouldWeDisableAllCMakeBuilds: ${flags.shouldWeDisableAllCMakeBuilds}"
+  flags.shouldWeEnableMacOSCMakeBuild = shouldWeEnableMacOSCMakeBuild()
+  print "shouldWeEnableMacOSCMakeBuild: ${flags.shouldWeEnableMacOSCMakeBuild}"
+  flags.shouldWeEnableUCRTCMakeBuild = shouldWeEnableUCRTCMakeBuild()
+  print "shouldWeEnableUCRTCMakeBuild: ${flags.shouldWeEnableUCRTCMakeBuild}"
+  flags.shouldWeRunTests = shouldWeRunTests()
+  print "shouldWeRunTests: ${flags.shouldWeRunTests}"
+  flags.shouldWeRunRustTests = flags.shouldWeRunTests && shouldWeRunRustTests()
+  print "shouldWeRunRustTests: ${flags.shouldWeRunRustTests}"
+  return flags
 }
 
 def outputSync()
