@@ -61,6 +61,7 @@ protected
   import NFFunction.Function;
   import Variable = NFVariable;
   import ComponentRef = NFComponentRef;
+  import Subscript = NFSubscript;
 
   // Backend imports
   import Adjacency = NBAdjacency;
@@ -401,7 +402,7 @@ protected
   function minimal extends Module.tearingInterface;
     // only extracts discrete variables to be solved as inner equations
   protected
-    Tearing strict;
+    Tearing strict, innerStrict;
     list<Pointer<Variable>> vars_lst, cont_vars, disc_vars, implied_vars, alg_implied;
     list<Pointer<Equation>> eqns_lst, cont_eqns, disc_eqns, alg_eqns;
     Integer num_vars, num_eqns;

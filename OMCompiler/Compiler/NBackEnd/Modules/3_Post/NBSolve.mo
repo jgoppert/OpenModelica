@@ -298,7 +298,6 @@ public
 
         case StrongComponent.ALGEBRAIC_LOOP(strict = strict) algorithm
           for index in arrayLength(strict.innerEquations):-1:1 loop
-            // ToDo: fail for non explicit inner equations?
             (tmp, implicit_index) := solveStrongComponent(strict.innerEquations[index], funcMap, kind, implicit_index, slicing_map, varData, eqData);
             inner_comps := listAppend(tmp, inner_comps);
             for elem in tmp loop
@@ -406,6 +405,7 @@ public
       local
         Slice<VariablePointer> var_slice;
         Slice<EquationPointer> eqn_slice;
+        Equation eqn;
 
       case StrongComponent.SLICED_COMPONENT(var = var_slice, eqn = eqn_slice) guard(Equation.isForEquation(Slice.getT(eqn_slice))) algorithm
         (comp, solve_status, implicit_index) := solveGenericEquationSlice(var_slice, eqn_slice, comp.var_cref, funcMap, kind, implicit_index, slicing_map, varData, eqData);
@@ -415,6 +415,27 @@ public
       case StrongComponent.RESIZABLE_COMPONENT(var = var_slice, eqn = eqn_slice) guard(Equation.isForEquation(Slice.getT(eqn_slice))) algorithm
         eqn_slice := Slice.apply(eqn_slice, function Pointer.apply(func = function Equation.applyForOrder(order = comp.order)));
         (comp, solve_status, implicit_index) := solveGenericEquationSlice(var_slice, eqn_slice, comp.var_cref, funcMap, kind, implicit_index, slicing_map, varData, eqData);
+      then (comp, solve_status);
+
+      // Scalar component inside an entwined block (no subscripts, full slice)
+      case StrongComponent.SINGLE_COMPONENT() algorithm
+        (eqn, solve_status, implicit_index) := solveSingleStrongComponent(Pointer.access(comp.eqn), Pointer.access(comp.var), funcMap, kind, implicit_index, slicing_map, varData, eqData);
+        comp := StrongComponent.SINGLE_COMPONENT(comp.var, Pointer.create(eqn), solve_status);
+      then (comp, solve_status);
+
+      // Scalar component with subscripted variable (e.g. x[1] = ...) inside an entwined block
+      case StrongComponent.SLICED_COMPONENT() algorithm
+        (eqn, solve_status, implicit_index) := solveSingleStrongComponent(Pointer.access(Slice.getT(comp.eqn)), Variable.fromCref(comp.var_cref), funcMap, kind, implicit_index, slicing_map, varData, eqData);
+        if solve_status < Status.UNSOLVABLE then
+          comp.eqn := Slice.SLICE(Pointer.create(eqn), comp.eqn.indices);
+        end if;
+        comp.status := solve_status;
+      then (comp, solve_status);
+
+      // Compound equation (when/algorithm/if) inside an entwined block
+      case StrongComponent.MULTI_COMPONENT() algorithm
+        (eqn_slice, solve_status, implicit_index) := solveMultiStrongComponent(comp.eqn, comp.vars, funcMap, kind, implicit_index, slicing_map, Iterator.EMPTY(), varData, eqData);
+        comp := StrongComponent.MULTI_COMPONENT(comp.vars, eqn_slice, solve_status);
       then (comp, solve_status);
 
       else algorithm
