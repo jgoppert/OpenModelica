@@ -862,6 +862,24 @@ private def shouldWeBuildAlpine() {
   return params.BUILD_ALPINE
 }
 
+private def shouldWeBuildEnterpriseLinux() {
+  if (isPR()) {
+    if (pullRequest.labels.contains("CI/Build Enterprise Linux")) {
+      return true
+    }
+  }
+  return params.BUILD_ENTERPRISE_LINUX
+}
+
+private def shouldWeBuildFedora() {
+  if (isPR()) {
+    if (pullRequest.labels.contains("CI/Build Fedora")) {
+      return true
+    }
+  }
+  return params.BUILD_FEDORA
+}
+
 private def shouldWeDisableAllCMakeBuilds() {
   if (isPR()) {
     if (pullRequest.labels.contains("CI/CMake/Disable/All")) {
@@ -944,6 +962,10 @@ Map evaluateBuildFlags() {
   print "shouldWeBuildUCRT: ${flags.shouldWeBuildUCRT}"
   flags.shouldWeBuildAlpine = shouldWeBuildAlpine()
   print "shouldWeBuildAlpine: ${flags.shouldWeBuildAlpine}"
+  flags.shouldWeBuildEnterpriseLinux = shouldWeBuildEnterpriseLinux()
+  print "shouldWeBuildEnterpriseLinux: ${flags.shouldWeBuildEnterpriseLinux}"
+  flags.shouldWeBuildFedora = shouldWeBuildFedora()
+  print "shouldWeBuildFedora: ${flags.shouldWeBuildFedora}"
   flags.shouldWeDisableAllCMakeBuilds = shouldWeDisableAllCMakeBuilds()
   print "shouldWeDisableAllCMakeBuilds: ${flags.shouldWeDisableAllCMakeBuilds}"
   flags.shouldWeEnableMacOSCMakeBuild = shouldWeEnableMacOSCMakeBuild()

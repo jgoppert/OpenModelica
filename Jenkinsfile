@@ -1,11 +1,14 @@
 def common
 def isPR
 def shouldWeBuildAlpine
-def shouldWeBuildUCRT
-def shouldWeDisableAllCMakeBuilds
+def shouldWeBuildEnterpriseLinux
+def shouldWeBuildFedora
 def shouldWeEnableMacOSCMakeBuild
 def shouldWeEnableUCRTCMakeBuild
+def shouldWeBuildUCRT
+def shouldWeDisableAllCMakeBuilds
 def shouldWeRunTests
+def shouldWeRunRustTests
 
 pipeline {
   agent none
@@ -19,6 +22,8 @@ pipeline {
   parameters {
     booleanParam(name: 'BUILD_MSYS2_UCRT64', defaultValue: false, description: 'Build with Win/MSYS2-UCRT64')
     booleanParam(name: 'BUILD_ALPINE', defaultValue: false, description: 'Build with Alpine (musl libc) using CMake')
+    booleanParam(name: 'BUILD_ENTERPRISE_LINUX', defaultValue: false, description: 'Build with Enterprise Linux')
+    booleanParam(name: 'BUILD_FEDORA', defaultValue: false, description: 'Build with Fedora 44')
     booleanParam(name: 'DISABLE_ALL_CMAKE_BUILDS', defaultValue: false, description: 'Skip building omc with CMake (CMake 3.17.2) on all platforms')
     booleanParam(name: 'ENABLE_MSYS2_UCRT64_CMAKE_BUILD', defaultValue: false, description: 'Enable building omc with CMake on MSYS2-UCRT64')
     booleanParam(name: 'ENABLE_MACOS_CMAKE_BUILD', defaultValue: false, description: 'Enable building omc with CMake on MacOS')
@@ -46,12 +51,14 @@ pipeline {
           def buildFlags = common.evaluateBuildFlags()
           isPR = buildFlags.isPR
           shouldWeBuildAlpine = buildFlags.shouldWeBuildAlpine
-          shouldWeBuildUCRT = buildFlags.shouldWeBuildUCRT
-          shouldWeDisableAllCMakeBuilds = buildFlags.shouldWeDisableAllCMakeBuilds
+          shouldWeBuildEnterpriseLinux = buildFlags.shouldWeBuildEnterpriseLinux
+          shouldWeBuildFedora = buildFlags.shouldWeBuildFedora
           shouldWeEnableMacOSCMakeBuild = buildFlags.shouldWeEnableMacOSCMakeBuild
           shouldWeEnableUCRTCMakeBuild = buildFlags.shouldWeEnableUCRTCMakeBuild
-          shouldWeRunRustTests = buildFlags.shouldWeRunRustTests
+          shouldWeBuildUCRT = buildFlags.shouldWeBuildUCRT
+          shouldWeDisableAllCMakeBuilds = buildFlags.shouldWeDisableAllCMakeBuilds
           shouldWeRunTests = buildFlags.shouldWeRunTests
+          shouldWeRunRustTests = buildFlags.shouldWeRunRustTests
         }
       }
     }
@@ -155,6 +162,68 @@ pipeline {
                 "-DCMAKE_INSTALL_PREFIX=build",
                 "-DCMAKE_C_COMPILER=clang",
                 "-DCMAKE_CXX_COMPILER=clang++"])
+            }
+          }
+        }
+        stage('cmake-enterprise-linux-gcc') {
+          agent {
+            docker {
+              image 'docker.openmodelica.org/build-deps:almalinux-10'
+              label 'linux'
+              alwaysPull true
+              args '''
+                --mount type=volume,source=omlibrary-cache,target=/cache/omlibrary \
+                -v /var/lib/jenkins/gitcache:/var/lib/jenkins/gitcache
+              '''
+            }
+          }
+          when {
+            beforeAgent true
+            expression { !shouldWeDisableAllCMakeBuilds && shouldWeBuildEnterpriseLinux }
+          }
+          options {
+            retry(count: 2, conditions: [nonresumable()])
+          }
+          steps {
+            script {
+              common.buildOMC_CMake([
+                "-DCMAKE_BUILD_TYPE=Release",
+                "-DOM_USE_CCACHE=OFF",
+                "-DCMAKE_INSTALL_PREFIX=build",
+                "-DCMAKE_C_COMPILER=gcc",
+                "-DCMAKE_CXX_COMPILER=g++",
+                "-DOM_OMEDIT_ANIMATION_QUICK3D=ON" // Almalinux-10 has no OpenSceneGraph, switch to Quick3D
+              ])
+            }
+          }
+        }
+        stage('cmake-fedora-gcc') {
+          agent {
+            docker {
+              image 'docker.openmodelica.org/build-deps:fedora-44'
+              label 'linux'
+              alwaysPull true
+              args '''
+                --mount type=volume,source=omlibrary-cache,target=/cache/omlibrary \
+                -v /var/lib/jenkins/gitcache:/var/lib/jenkins/gitcache
+              '''
+            }
+          }
+          when {
+            beforeAgent true
+            expression { !shouldWeDisableAllCMakeBuilds && shouldWeBuildFedora }
+          }
+          options {
+            retry(count: 2, conditions: [nonresumable()])
+          }
+          steps {
+            script {
+              common.buildOMC_CMake([
+                "-DCMAKE_BUILD_TYPE=Release",
+                "-DOM_USE_CCACHE=OFF",
+                "-DCMAKE_INSTALL_PREFIX=build",
+                "-DCMAKE_C_COMPILER=gcc",
+                "-DCMAKE_CXX_COMPILER=g++"])
             }
           }
         }
