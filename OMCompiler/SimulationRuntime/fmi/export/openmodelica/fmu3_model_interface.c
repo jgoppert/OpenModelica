@@ -610,47 +610,56 @@ ModelInstance* omcInstantiate(fmi3String instanceName, OMC_FmuType fmuType, fmi3
     return NULL;
   }
   comp = (ModelInstance *)calloc(1, sizeof(ModelInstance));
-  if (comp) {
-    DATA* fmudata = NULL;
-    MODEL_DATA* modelData = NULL;
-    SIMULATION_INFO* simInfo = NULL;
-    threadData_t *threadData = NULL;
-    int i;
-
-    comp->state = model_state_start_end;
-    comp->instanceName = (fmi3String)calloc(1 + strlen(instanceName), sizeof(char));
-    comp->GUID = (fmi3String)calloc(1 + strlen(fmuGUID), sizeof(char));
-    fmudata = (DATA *)calloc(1, sizeof(DATA));
-    modelData = (MODEL_DATA *)calloc(1, sizeof(MODEL_DATA));
-    simInfo = (SIMULATION_INFO *)calloc(1, sizeof(SIMULATION_INFO));
-    fmudata->modelData = modelData;
-    fmudata->simulationInfo = simInfo;
-
-    threadData = (threadData_t *)calloc(1, sizeof(threadData_t));
-    memset(threadData, 0, sizeof(threadData_t));
-    /*
-    pthread_key_create(&fmu3_thread_data_key,NULL);
-    pthread_setspecific(fmu3_thread_data_key, threadData);
-    */
-
-    comp->threadData = threadData;
-    comp->threadDataParent = threadDataParent;
-    comp->fmuData = fmudata;
-    threadData->localRoots[LOCAL_ROOT_FMI_DATA] = comp;
-    if (!comp->fmuData) {
-      omc_fmi3_logCallback(logMessage, instanceEnvironment, fmi3Error, "logStatusError", "omcInstantiate: Could not initialize the global data structure file.");
-      return NULL;
-    }
-    // set all categories to on or off. omcSetDebugLogging should be called to choose specific categories.
-    for (i = 0; i < NUMBER_OF_CATEGORIES; i++) {
-      comp->logCategories[i] = loggingOn;
-    }
-  }
-
-  if (!comp || !comp->instanceName || !comp->GUID) {
+  if (!comp) {
     omc_fmi3_logCallback(logMessage, instanceEnvironment, fmi3Error, "logStatusError", "omcInstantiate: Out of memory.");
     return NULL;
   }
+
+  DATA* fmudata = NULL;
+  MODEL_DATA* modelData = NULL;
+  SIMULATION_INFO* simInfo = NULL;
+  threadData_t *threadData = NULL;
+  int i;
+
+  comp->state = model_state_start_end;
+  comp->instanceName = (fmi3String)calloc(1 + strlen(instanceName), sizeof(char));
+  comp->GUID = (fmi3String)calloc(1 + strlen(fmuGUID), sizeof(char));
+  fmudata = (DATA *)calloc(1, sizeof(DATA));
+  modelData = (MODEL_DATA *)calloc(1, sizeof(MODEL_DATA));
+  simInfo = (SIMULATION_INFO *)calloc(1, sizeof(SIMULATION_INFO));
+  threadData = (threadData_t *)calloc(1, sizeof(threadData_t));
+
+  /* Every allocation has to be checked before any of them is dereferenced below. */
+  if (!comp->instanceName || !comp->GUID || !fmudata || !modelData || !simInfo || !threadData) {
+    omc_fmi3_logCallback(logMessage, instanceEnvironment, fmi3Error, "logStatusError", "omcInstantiate: Out of memory.");
+    free(threadData);
+    free(simInfo);
+    free(modelData);
+    free(fmudata);
+    free((void*)comp->GUID);
+    free((void*)comp->instanceName);
+    free(comp);
+    return NULL;
+  }
+
+  memset(threadData, 0, sizeof(threadData_t));
+  fmudata->modelData = modelData;
+  fmudata->simulationInfo = simInfo;
+  /*
+  pthread_key_create(&fmu3_thread_data_key,NULL);
+  pthread_setspecific(fmu3_thread_data_key, threadData);
+  */
+
+  comp->threadData = threadData;
+  comp->threadDataParent = threadDataParent;
+  comp->fmuData = fmudata;
+  threadData->localRoots[LOCAL_ROOT_FMI_DATA] = comp;
+
+  // set all categories to on or off. omcSetDebugLogging should be called to choose specific categories.
+  for (i = 0; i < NUMBER_OF_CATEGORIES; i++) {
+    comp->logCategories[i] = loggingOn;
+  }
+
 #if defined(OM_HAVE_PTHREADS)
   pthread_setspecific(mmc_thread_data_key, comp->threadData);
 #endif
@@ -877,8 +886,8 @@ void omcFreeInstance(ModelInstance* c)
   free(comp->threadData);
   free(comp->fmuData);
   /* free instanceName & GUID */
-  if (comp->instanceName) free((void*)comp->instanceName);
-  if (comp->GUID) free((void*)comp->GUID);
+  free((void*)comp->instanceName);
+  free((void*)comp->GUID);
   /* free comp */
   free(comp);
   free_memory_pool();
@@ -950,6 +959,9 @@ fmi3Status omcExitInitializationMode(ModelInstance* c)
     if (initialization(comp->fmuData, comp->threadData, "fmi", "", 0.0))
     {
       comp->state = model_state_error;
+      omc_util_restore_pool_state(mem_pool_state);
+      MMC_RESTORE_INTERNAL(simulationJumpBuffer);
+      threadData->mmc_jumper = old_jmp;
       resetThreadData(comp);
       FILTERED_LOG(comp, fmi3Error, LOG_FMI3_CALL, "omcExitInitializationMode: failed")
       return fmi3Error;
@@ -1267,13 +1279,13 @@ fmi3Status omcSetReal(ModelInstance* c, const fmi3ValueReference vr[], size_t nv
     return fmi3Error;
   if (nvr > 0 && nullPointer(comp, "omcSetReal", "value[]", value))
     return fmi3Error;
-  FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetReal: nvr = %d", nvr)
+  FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetReal: nvr = %zu", nvr)
   // no check whether setting the value is allowed in the current state
   for (i = 0; i < nvr; i++)
   {
     if (vrOutOfRange(comp, "omcSetReal", vr[i], NUMBER_OF_REALS+NUMBER_OF_STATES))
       return fmi3Error;
-    FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetReal: #r%d# = %.16g", vr[i], value[i])
+    FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetReal: #r%u# = %.16g", vr[i], value[i])
     if (setReal(comp, vr[i], value[i]) != fmi3OK) // to be implemented by the includer of this file
       return fmi3Error;
   }
@@ -1294,13 +1306,13 @@ fmi3Status omcSetInteger(ModelInstance* c, const fmi3ValueReference vr[], size_t
     return fmi3Error;
   if (nvr > 0 && nullPointer(comp, "omcSetInteger", "value[]", value))
     return fmi3Error;
-  FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetInteger: nvr = %d", nvr)
+  FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetInteger: nvr = %zu", nvr)
 
   for (i = 0; i < nvr; i++)
   {
     if (vrOutOfRange(comp, "omcSetInteger", vr[i], NUMBER_OF_INTEGERS))
       return fmi3Error;
-    FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetInteger: #i%d# = %d", vr[i], value[i])
+    FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetInteger: #i%u# = %d", vr[i], value[i])
     if (setInteger(comp, vr[i], value[i]) != fmi3OK) // to be implemented by the includer of this file
       return fmi3Error;
   }
@@ -1320,13 +1332,13 @@ fmi3Status omcSetBoolean(ModelInstance* c, const fmi3ValueReference vr[], size_t
     return fmi3Error;
   if (nvr>0 && nullPointer(comp, "omcSetBoolean", "value[]", value))
     return fmi3Error;
-  FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetBoolean: nvr = %d", nvr)
+  FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetBoolean: nvr = %zu", nvr)
 
   for (i = 0; i < nvr; i++)
   {
     if (vrOutOfRange(comp, "omcSetBoolean", vr[i], NUMBER_OF_BOOLEANS))
       return fmi3Error;
-    FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetBoolean: #b%d# = %s", vr[i], value[i] ? "true" : "false")
+    FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetBoolean: #b%u# = %s", vr[i], value[i] ? "true" : "false")
     if (setBoolean(comp, vr[i], value[i]) != fmi3OK) // to be implemented by the includer of this file
       return fmi3Error;
   }
@@ -1336,7 +1348,7 @@ fmi3Status omcSetBoolean(ModelInstance* c, const fmi3ValueReference vr[], size_t
 
 fmi3Status omcSetString(ModelInstance* c, const fmi3ValueReference vr[], size_t nvr, const fmi3String value[])
 {
-  int i, n;
+  int i;
   ModelInstance *comp = (ModelInstance *)c;
   int meStates = model_state_instantiated|model_state_initialization_mode|model_state_me_event_mode|model_state_me_continuous_time_mode|model_state_terminated;
   int csStates = model_state_instantiated|model_state_initialization_mode|model_state_cs_step_complete|model_state_terminated;
@@ -1347,13 +1359,13 @@ fmi3Status omcSetString(ModelInstance* c, const fmi3ValueReference vr[], size_t 
     return fmi3Error;
   if (nvr>0 && nullPointer(comp, "omcSetString", "value[]", value))
     return fmi3Error;
-  FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetString: nvr = %d", nvr)
+  FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetString: nvr = %zu", nvr)
 
   for (i = 0; i < nvr; i++)
   {
     if (vrOutOfRange(comp, "omcSetString", vr[i], NUMBER_OF_STRINGS))
       return fmi3Error;
-    FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetString: #s%d# = '%s'", vr[i], value[i])
+    FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetString: #s%u# = '%s'", vr[i], value[i])
     if (setString(comp, vr[i], value[i]) != fmi3OK) // to be implemented by the includer of this file
       return fmi3Error;
   }
@@ -1768,8 +1780,6 @@ fmi3Status omcGetDirectionalDerivativeForInitialization(ModelInstance* c,
 {
   ModelInstance *comp = (ModelInstance *)c;
   DATA* fmudata = (DATA *) comp->fmuData;
-  SIMULATION_INFO* simInfo = (SIMULATION_INFO*) fmudata->simulationInfo;
-  MODEL_DATA* modelData = (MODEL_DATA*) fmudata->modelData;
   threadData_t* td = comp->threadData;
 
   /***************************************/
@@ -1836,11 +1846,10 @@ fmi3Status omcGetDirectionalDerivative(ModelInstance* c,
 {
   ModelInstance *comp = (ModelInstance *)c;
   DATA* fmudata = (DATA *) comp->fmuData;
-  SIMULATION_INFO* simInfo = (SIMULATION_INFO*) fmudata->simulationInfo;
   MODEL_DATA* modelData = (MODEL_DATA*) fmudata->modelData;
   threadData_t* td = comp->threadData;
 
-  int i,j;
+  int i;
 
   int independent = modelData->nStates+modelData->nInputVars;
   int dependent = modelData->nStates+modelData->nOutputVars;
@@ -2052,7 +2061,7 @@ fmi3Status internalSetContinuousStates(ModelInstance* c, const fmi3Float64 x[], 
 #if NUMBER_OF_STATES > 0
   for (i = 0; i < nx; i++) {
     fmi3ValueReference vr = vrStates[i];
-    FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetContinuousStates: #r%d# = %.16g", vr, x[i])
+    FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetContinuousStates: #r%u# = %.16g", vr, x[i])
     if (vr < 0 || vr >= NUMBER_OF_REALS|| setReal(comp, vr, x[i]) != fmi3OK) { // to be implemented by the includer of this file
       return fmi3Error;
     }
@@ -2101,7 +2110,7 @@ fmi3Status internalGetDerivatives(ModelInstance* c, const char *func, fmi3Float6
     for (i = 0; i < nx; i++) {
       fmi3ValueReference vr = vrStatesDerivatives[i];
       derivatives[i] = getReal(comp, vr); // to be implemented by the includer of this file
-      FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "%s: #r%d# = %.16g", func, vr, derivatives[i])
+      FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "%s: #r%u# = %.16g", func, vr, derivatives[i])
     }
 #endif
 
@@ -2222,8 +2231,9 @@ fmi3Status internalGetNominalsOfContinuousStates(ModelInstance* c, fmi3Float64 x
     return fmi3Error;
   if (nullPointer(comp, "omcGetNominalsOfContinuousStates", "x_nominal[]", x_nominal))
     return fmi3Error;
-  x_nominal[0] = 1;
-  FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcGetNominalsOfContinuousStates: x_nominal[0..%d] = 1.0", nx-1)
+  if (nx > 0) {
+    FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcGetNominalsOfContinuousStates: x_nominal[0..%zu] = 1.0", nx-1)
+  }
   for (i = 0; i < nx; i++)
     x_nominal[i] = 1;
   return fmi3OK;
@@ -2256,7 +2266,7 @@ fmi3Status omcSetRealInputDerivatives(ModelInstance* c, const fmi3ValueReference
   if (nvr > 0 && nullPointer(comp, "omcSetRealInputDerivatives", "value[]", value))
     return fmi3Error;
 
-  FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetRealInputDerivatives: nvr = %d", nvr)
+  FILTERED_LOG(comp, fmi3OK, LOG_FMI3_CALL, "omcSetRealInputDerivatives: nvr = %zu", nvr)
 
 #if NUMBER_OF_REAL_INPUTS > 0
   for (i = 0; i < nvr; i++)
@@ -2815,7 +2825,6 @@ int FMI3CS_initializeSolverData(ModelInstance* comp)
         FILTERED_LOG(comp, fmi3Fatal, LOG_STATUSFATAL, "omcInstantiate: Out of memory.")
         free(solverInfo);
         return -1;
-        retValue = -1;
       } else {
         /* FMI 3.0 has no memory callbacks, so plain free matches the calloc
          * above. Must be set: cvode_solver_deinitial frees the struct through
