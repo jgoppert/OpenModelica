@@ -129,6 +129,16 @@ pub(crate) fn add_host_builtins(linker: &mut wasmtime::Linker<()>) -> Result<()>
             });
         },
     ))?;
+    // The in-wasm session driver (`rt_sim_*`) polls these for its chunk budget and
+    // cooperative cancel, wasm-side, so it uses the *same* clock/cancel source as
+    // the host driver. Present in every runtime instantiation (unused by the host
+    // driver path).
+    wt(linker.func_wrap("env", "rt_host_now_ms", || -> f64 {
+        openmodelica_sim_meta::driver::now_ms_host()
+    }))?;
+    wt(linker.func_wrap("env", "rt_host_cancel", || -> i32 {
+        metamodelica::cancel::check_cancel() as i32
+    }))?;
     Ok(())
 }
 
@@ -594,6 +604,18 @@ mod tests {
     use super::*;
     use wasm_encoder as we;
 
+    /// The precompiled runtime, instantiated over the same host imports the
+    /// production linker provides.
+    fn runtime_instance() -> (wasmtime::Store<()>, wasmtime::Instance) {
+        let engine = wasmtime::Engine::default();
+        let module = wasmtime::Module::new(&engine, RUNTIME_WASM).unwrap();
+        let mut store = wasmtime::Store::new(&engine, ());
+        let mut linker = wasmtime::Linker::new(&engine);
+        add_host_builtins(&mut linker).unwrap();
+        let inst = linker.instantiate(&mut store, &module).unwrap();
+        (store, inst)
+    }
+
     /// Read the bytes of a runtime string handle out of an instance's memory.
     fn read_rt_string(
         store: &mut wasmtime::Store<()>,
@@ -613,10 +635,7 @@ mod tests {
     /// byte-for-byte (so `String(Real)` stays identical to the C target).
     #[test]
     fn precompiled_runtime_string_abi() {
-        let engine = wasmtime::Engine::default();
-        let module = wasmtime::Module::new(&engine, RUNTIME_WASM).unwrap();
-        let mut store = wasmtime::Store::new(&engine, ());
-        let inst = wasmtime::Linker::new(&engine).instantiate(&mut store, &module).unwrap();
+        let (mut store, inst) = runtime_instance();
         let mem = inst.get_memory(&mut store, "memory").unwrap();
 
         let int_string = inst.get_typed_func::<i32, i32>(&mut store, "rt_int_string").unwrap();
@@ -669,10 +688,7 @@ mod tests {
     /// elements without trapping.
     #[test]
     fn precompiled_runtime_array_abi() {
-        let engine = wasmtime::Engine::default();
-        let module = wasmtime::Module::new(&engine, RUNTIME_WASM).unwrap();
-        let mut store = wasmtime::Store::new(&engine, ());
-        let inst = wasmtime::Linker::new(&engine).instantiate(&mut store, &module).unwrap();
+        let (mut store, inst) = runtime_instance();
         let mem = inst.get_memory(&mut store, "memory").unwrap();
 
         let arr_new = inst.get_typed_func::<(i32, i32, i32), i32>(&mut store, "rt_array_new").unwrap();
@@ -744,10 +760,7 @@ mod tests {
     /// `min`/`max`) over a Real array.
     #[test]
     fn precompiled_runtime_array_builtins() {
-        let engine = wasmtime::Engine::default();
-        let module = wasmtime::Module::new(&engine, RUNTIME_WASM).unwrap();
-        let mut store = wasmtime::Store::new(&engine, ());
-        let inst = wasmtime::Linker::new(&engine).instantiate(&mut store, &module).unwrap();
+        let (mut store, inst) = runtime_instance();
         let mem = inst.get_memory(&mut store, "memory").unwrap();
 
         let arr_new = inst.get_typed_func::<(i32, i32, i32), i32>(&mut store, "rt_array_new").unwrap();
@@ -783,10 +796,7 @@ mod tests {
     fn precompiled_runtime_real_format_and_pad_abi() {
         use openmodelica_util::System;
 
-        let engine = wasmtime::Engine::default();
-        let module = wasmtime::Module::new(&engine, RUNTIME_WASM).unwrap();
-        let mut store = wasmtime::Store::new(&engine, ());
-        let inst = wasmtime::Linker::new(&engine).instantiate(&mut store, &module).unwrap();
+        let (mut store, inst) = runtime_instance();
         let mem = inst.get_memory(&mut store, "memory").unwrap();
 
         let real_format =
@@ -1016,10 +1026,7 @@ mod tests {
     /// operand orders) and negation, over Real and Integer elements.
     #[test]
     fn precompiled_runtime_array_elementwise() {
-        let engine = wasmtime::Engine::default();
-        let module = wasmtime::Module::new(&engine, RUNTIME_WASM).unwrap();
-        let mut store = wasmtime::Store::new(&engine, ());
-        let inst = wasmtime::Linker::new(&engine).instantiate(&mut store, &module).unwrap();
+        let (mut store, inst) = runtime_instance();
         let mem = inst.get_memory(&mut store, "memory").unwrap();
         let arr_new = inst.get_typed_func::<(i32, i32, i32), i32>(&mut store, "rt_array_new").unwrap();
         let set_dim = inst.get_typed_func::<(i32, i32, i32), ()>(&mut store, "rt_array_set_dim").unwrap();
@@ -1081,10 +1088,7 @@ mod tests {
     /// `transpose` of a 2x3 Integer matrix gives a 3x2 with swapped indices.
     #[test]
     fn precompiled_runtime_array_transpose() {
-        let engine = wasmtime::Engine::default();
-        let module = wasmtime::Module::new(&engine, RUNTIME_WASM).unwrap();
-        let mut store = wasmtime::Store::new(&engine, ());
-        let inst = wasmtime::Linker::new(&engine).instantiate(&mut store, &module).unwrap();
+        let (mut store, inst) = runtime_instance();
         let mem = inst.get_memory(&mut store, "memory").unwrap();
         let arr_new = inst.get_typed_func::<(i32, i32, i32), i32>(&mut store, "rt_array_new").unwrap();
         let set_dim = inst.get_typed_func::<(i32, i32, i32), ()>(&mut store, "rt_array_set_dim").unwrap();
@@ -1118,10 +1122,7 @@ mod tests {
     /// array of (kind, value) pairs as the codegen builds it.
     #[test]
     fn precompiled_runtime_array_slice() {
-        let engine = wasmtime::Engine::default();
-        let module = wasmtime::Module::new(&engine, RUNTIME_WASM).unwrap();
-        let mut store = wasmtime::Store::new(&engine, ());
-        let inst = wasmtime::Linker::new(&engine).instantiate(&mut store, &module).unwrap();
+        let (mut store, inst) = runtime_instance();
         let mem = inst.get_memory(&mut store, "memory").unwrap();
         let arr_new = inst.get_typed_func::<(i32, i32, i32), i32>(&mut store, "rt_array_new").unwrap();
         let set_dim = inst.get_typed_func::<(i32, i32, i32), ()>(&mut store, "rt_array_set_dim").unwrap();
@@ -1186,10 +1187,7 @@ mod tests {
     /// concat along dim 2 (strided copy into the result).
     #[test]
     fn precompiled_runtime_array_cat() {
-        let engine = wasmtime::Engine::default();
-        let module = wasmtime::Module::new(&engine, RUNTIME_WASM).unwrap();
-        let mut store = wasmtime::Store::new(&engine, ());
-        let inst = wasmtime::Linker::new(&engine).instantiate(&mut store, &module).unwrap();
+        let (mut store, inst) = runtime_instance();
         let mem = inst.get_memory(&mut store, "memory").unwrap();
         let arr_new = inst.get_typed_func::<(i32, i32, i32), i32>(&mut store, "rt_array_new").unwrap();
         let set_dim = inst.get_typed_func::<(i32, i32, i32), ()>(&mut store, "rt_array_set_dim").unwrap();
@@ -1262,10 +1260,7 @@ mod tests {
     /// matrix·vector, and a non-square matrix·matrix product.
     #[test]
     fn precompiled_runtime_array_matmul() {
-        let engine = wasmtime::Engine::default();
-        let module = wasmtime::Module::new(&engine, RUNTIME_WASM).unwrap();
-        let mut store = wasmtime::Store::new(&engine, ());
-        let inst = wasmtime::Linker::new(&engine).instantiate(&mut store, &module).unwrap();
+        let (mut store, inst) = runtime_instance();
         let mem = inst.get_memory(&mut store, "memory").unwrap();
         let arr_new = inst.get_typed_func::<(i32, i32, i32), i32>(&mut store, "rt_array_new").unwrap();
         let set_dim = inst.get_typed_func::<(i32, i32, i32), ()>(&mut store, "rt_array_set_dim").unwrap();
@@ -1317,10 +1312,7 @@ mod tests {
     /// the zero / negative-exponent cases, and the reciprocal branch.
     #[test]
     fn precompiled_runtime_real_int_pow() {
-        let engine = wasmtime::Engine::default();
-        let module = wasmtime::Module::new(&engine, RUNTIME_WASM).unwrap();
-        let mut store = wasmtime::Store::new(&engine, ());
-        let inst = wasmtime::Linker::new(&engine).instantiate(&mut store, &module).unwrap();
+        let (mut store, inst) = runtime_instance();
         let pow = inst.get_typed_func::<(f64, i32), f64>(&mut store, "rt_real_int_pow").unwrap();
         assert_eq!(pow.call(&mut store, (2.0, 10)).unwrap(), 1024.0);
         assert_eq!(pow.call(&mut store, (10.0, 3)).unwrap(), 1000.0);
@@ -1336,10 +1328,7 @@ mod tests {
     /// / nan-inf cases that must trap.
     #[test]
     fn precompiled_runtime_real_pow() {
-        let engine = wasmtime::Engine::default();
-        let module = wasmtime::Module::new(&engine, RUNTIME_WASM).unwrap();
-        let mut store = wasmtime::Store::new(&engine, ());
-        let inst = wasmtime::Linker::new(&engine).instantiate(&mut store, &module).unwrap();
+        let (mut store, inst) = runtime_instance();
         let pow = inst.get_typed_func::<(f64, f64), f64>(&mut store, "rt_real_pow").unwrap();
         assert_eq!(pow.call(&mut store, (2.0, 3.0)).unwrap(), 8.0);
         assert_eq!(pow.call(&mut store, (4.0, 0.5)).unwrap(), 2.0);
@@ -1355,10 +1344,7 @@ mod tests {
     /// `rt_mod_int`: floored integer modulo, result takes the divisor's sign.
     #[test]
     fn precompiled_runtime_mod_int() {
-        let engine = wasmtime::Engine::default();
-        let module = wasmtime::Module::new(&engine, RUNTIME_WASM).unwrap();
-        let mut store = wasmtime::Store::new(&engine, ());
-        let inst = wasmtime::Linker::new(&engine).instantiate(&mut store, &module).unwrap();
+        let (mut store, inst) = runtime_instance();
         let m = inst.get_typed_func::<(i32, i32), i32>(&mut store, "rt_mod_int").unwrap();
         assert_eq!(m.call(&mut store, (7, 3)).unwrap(), 1);
         assert_eq!(m.call(&mut store, (-7, 3)).unwrap(), 2);
@@ -1372,10 +1358,7 @@ mod tests {
     /// symmetric, cross, outerProduct, skew (all Real where numeric).
     #[test]
     fn precompiled_runtime_shape_builtins() {
-        let engine = wasmtime::Engine::default();
-        let module = wasmtime::Module::new(&engine, RUNTIME_WASM).unwrap();
-        let mut store = wasmtime::Store::new(&engine, ());
-        let inst = wasmtime::Linker::new(&engine).instantiate(&mut store, &module).unwrap();
+        let (mut store, inst) = runtime_instance();
         let mem = inst.get_memory(&mut store, "memory").unwrap();
         let arr_new = inst.get_typed_func::<(i32, i32, i32), i32>(&mut store, "rt_array_new").unwrap();
         let set_dim = inst.get_typed_func::<(i32, i32, i32), ()>(&mut store, "rt_array_set_dim").unwrap();
@@ -1454,10 +1437,7 @@ mod tests {
     /// Integer[] -> Real[] cast, and element-wise Boolean and/or/not.
     #[test]
     fn precompiled_runtime_int_to_real_and_logical() {
-        let engine = wasmtime::Engine::default();
-        let module = wasmtime::Module::new(&engine, RUNTIME_WASM).unwrap();
-        let mut store = wasmtime::Store::new(&engine, ());
-        let inst = wasmtime::Linker::new(&engine).instantiate(&mut store, &module).unwrap();
+        let (mut store, inst) = runtime_instance();
         let mem = inst.get_memory(&mut store, "memory").unwrap();
         let arr_new = inst.get_typed_func::<(i32, i32, i32), i32>(&mut store, "rt_array_new").unwrap();
         let set_dim = inst.get_typed_func::<(i32, i32, i32), ()>(&mut store, "rt_array_set_dim").unwrap();
@@ -1506,10 +1486,7 @@ mod tests {
     /// The matrix-constructor builtins: identity, diagonal, linspace.
     #[test]
     fn precompiled_runtime_array_constructors() {
-        let engine = wasmtime::Engine::default();
-        let module = wasmtime::Module::new(&engine, RUNTIME_WASM).unwrap();
-        let mut store = wasmtime::Store::new(&engine, ());
-        let inst = wasmtime::Linker::new(&engine).instantiate(&mut store, &module).unwrap();
+        let (mut store, inst) = runtime_instance();
         let mem = inst.get_memory(&mut store, "memory").unwrap();
         let arr_new = inst.get_typed_func::<(i32, i32, i32), i32>(&mut store, "rt_array_new").unwrap();
         let set_dim = inst.get_typed_func::<(i32, i32, i32), ()>(&mut store, "rt_array_set_dim").unwrap();
@@ -1557,10 +1534,7 @@ mod tests {
     /// once per record (no double free, no leak).
     #[test]
     fn precompiled_runtime_record() {
-        let engine = wasmtime::Engine::default();
-        let module = wasmtime::Module::new(&engine, RUNTIME_WASM).unwrap();
-        let mut store = wasmtime::Store::new(&engine, ());
-        let inst = wasmtime::Linker::new(&engine).instantiate(&mut store, &module).unwrap();
+        let (mut store, inst) = runtime_instance();
         let mem = inst.get_memory(&mut store, "memory").unwrap();
         let rec_new = inst.get_typed_func::<(i32, i32), i32>(&mut store, "rt_record_new").unwrap();
         let rec_copy = inst.get_typed_func::<i32, i32>(&mut store, "rt_record_copy").unwrap();
