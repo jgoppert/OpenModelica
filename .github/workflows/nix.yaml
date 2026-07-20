@@ -1,0 +1,57 @@
+name: Nix
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    paths:
+      - '.github/workflows/nix.yaml'
+      - 'flake.lock'
+      - 'flake.nix'
+      - 'nix/**'
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build OpenModelica
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Verify Cachix token
+        if: github.event_name != 'pull_request'
+        env:
+          CACHIX_AUTH_TOKEN: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+        run: test -n "$CACHIX_AUTH_TOKEN"
+
+      - name: Configure Cachix
+        uses: cachix/cachix-action@v17
+        with:
+          name: cognipilot
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Check flake
+        run: nix flake check --print-build-logs
+
+      - name: Build OpenModelica
+        run: nix build .#openmodelica --print-build-logs
+
+      - name: Check compiler
+        run: nix run . -- --version

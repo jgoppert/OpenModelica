@@ -1,15 +1,16 @@
+# Keep these URLs absolute so recursive checkouts and Nix builds also work from forks.
 [submodule "OMOptim"]
 	path = OMOptim
-	url = ../OMOptim.git
+	url = https://github.com/OpenModelica/OMOptim.git
 [submodule "OMSimulator"]
 	path = OMSimulator
-	url = ../OMSimulator.git
+	url = https://github.com/OpenModelica/OMSimulator.git
 [submodule "OMCompiler/3rdParty"]
 	path = OMCompiler/3rdParty
-	url = ../OMCompiler-3rdParty
+	url = https://github.com/OpenModelica/OMCompiler-3rdParty.git
 [submodule "OMSens_Qt"]
 	path = OMSens_Qt
-	url = ../OMSens_Qt.git
+	url = https://github.com/OpenModelica/OMSens_Qt.git
 [submodule "OMCompiler/Compiler/boot/bomc"]
 	path = OMCompiler/Compiler/boot/bomc
-	url = ../OMBootstrapping.git
+	url = https://github.com/OpenModelica/OMBootstrapping.git

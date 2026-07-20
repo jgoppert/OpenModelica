@@ -1,0 +1,2 @@
+This distribution uses OpenModelica under the GNU Affero General Public
+License version 3 (AGPL-3.0-only) mode of the OSMC Public License version 1.8.

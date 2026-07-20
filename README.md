@@ -98,6 +98,29 @@ git submodule update --init --recursive libraries
 * [Linux/WSL/OSX Instructions](OMCompiler/README.Linux.md)
 * [Windows Instructions](OMCompiler/README.Windows.md)
 
+### Nix
+
+With Nix 2.27 or newer and flakes enabled, build and run the non-GUI OpenModelica
+compiler and simulation runtimes with:
+
+```bash
+nix build
+nix run -- --version
+```
+
+Install the compiler directly from GitHub with:
+
+```bash
+nix profile install github:OpenModelica/OpenModelica
+```
+
+Use `nix develop` for a shell containing the same build dependencies. To upload
+the reproducible result to an existing Cachix cache, run:
+
+```bash
+nix build --no-link --print-out-paths | cachix push mycache
+```
+
 We automatically generate nightly builds for
 [Windows](https://openmodelica.org/download/download-windows/) and for various flavours of
 [Linux](https://openmodelica.org/download/download-linux/). You can download and install
