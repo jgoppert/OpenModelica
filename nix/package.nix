@@ -23,7 +23,7 @@
   libuuid,
   makeWrapper,
   ninja,
-  openblas,
+  openblasCompat,
   perl,
   pkg-config,
   python3,
@@ -62,7 +62,7 @@ stdenv.mkDerivation {
     libffi
     libiconv
     libuuid
-    openblas
+    openblasCompat
   ]
   ++ lib.optionals withGui [
     # Add Qt 6, OpenSceneGraph, and the remaining GUI dependencies here.
@@ -85,6 +85,8 @@ stdenv.mkDerivation {
 
   postFixup = ''
     wrapProgram "$out/bin/omc" \
+      --unset NIX_CFLAGS_COMPILE \
+      --unset NIX_LDFLAGS \
       --prefix PATH : ${
         lib.makeBinPath [
           gnumake
@@ -95,7 +97,7 @@ stdenv.mkDerivation {
       --prefix LIBRARY_PATH : ${
         lib.makeLibraryPath [
           gfortran.cc.lib
-          openblas
+          openblasCompat
         ]
       }
   '';
@@ -120,6 +122,26 @@ stdenv.mkDerivation {
     "$out/bin/omc" smoke-test.mos
     test -x HelloWorld
     ./HelloWorld
+
+    cat > LinearSystemSmoke.mo <<'EOF'
+    model LinearSystemSmoke
+      Real a;
+      Real b;
+      Real c;
+      Real d;
+    equation
+      time*a + sin(time)*b + (1 + time)*c + cos(sin(time))*d = time^2 + time + 1;
+      cosh(time)*a + exp(time)*b + tanh(1 + time)*c + cos(7*time + 5)*d = (time + 5)^2 + time + 1;
+      exp(time)*a + (1 + time)*(time - 1)*b + sinh(1 + time)*c + cos(time + 3)*d = (time + 8)^2 + time + 1;
+      cos(time)*a + sin(time)^2*b + (1 + time)^2*c + cos(10*time)^3*d = time^5 + time + 1;
+    end LinearSystemSmoke;
+    EOF
+    printf '%s\n' \
+      'loadFile("LinearSystemSmoke.mo");' \
+      'simulate(LinearSystemSmoke, stopTime=0.1, numberOfIntervals=10, outputFormat="csv");' \
+      'getErrorString();' > linear-system-smoke.mos
+    "$out/bin/omc" linear-system-smoke.mos
+    test -s LinearSystemSmoke_res.csv
     runHook postInstallCheck
   '';
 
